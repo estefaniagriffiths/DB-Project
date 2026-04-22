@@ -20,7 +20,27 @@ def add_item(new_item: Item = None):
     new_item - An Item object containing a new item to be inserted into the DB in the item table.
         new_item and its attributes will never be None.
     """
-    raise NotImplementedError("you must implement this function")
+    cur.execute("SELECT COALESCE(MAX(i_item_sk), 0) + 1 FROM item")
+    new_sk = cur.fetchone()[0]
+    start_date = f"{new_item.start_year}-01-01"
+
+    query = """
+        INSERT INTO item (i_item_sk, i_item_id, i_rec_start_date, i_product_name, 
+                          i_brand, i_category, i_manufact, i_current_price, i_num_owned)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+    """
+    
+    cur.execute(query, (
+        new_sk,
+        new_item.item_id,
+        start_date,
+        new_item.product_name,
+        new_item.brand,
+        new_item.category,
+        new_item.manufact,
+        new_item.current_price,
+        new_item.num_owned
+    ))
 
 
 def add_customer(new_customer: Customer = None):
@@ -44,7 +64,14 @@ def rent_item(item_id: str = None, customer_id: str = None):
     item_id - A string containing the Item ID for the item being rented.
     customer_id - A string containing the customer id of the customer renting the item.
     """
-    raise NotImplementedError("you must implement this function")
+    today = date.today()
+    due = today + timedelta(days=14)
+    
+    query = """
+        INSERT INTO rental (item_id, customer_id, rental_date, due_date)
+        VALUES (?, ?, ?, ?)
+    """
+    cur.execute(query, (item_id, customer_id, today.isoformat(), due.isoformat()))
 
 
 def waitlist_customer(item_id: str = None, customer_id: str = None) -> int:
@@ -130,7 +157,21 @@ def number_in_stock(item_id: str = None) -> int:
     """
     Returns num_owned - active rentals. Returns -1 if item doesn't exist.
     """
-    raise NotImplementedError("you must implement this function")
+    if not item_id:
+        return -1
+        
+    cur.execute("SELECT i_num_owned FROM item WHERE i_item_id = ?", (item_id,))
+    row = cur.fetchone()
+    
+    if row is None:
+        return -1
+        
+    total_owned = row[0]
+    
+    cur.execute("SELECT COUNT(*) FROM rental WHERE item_id = ?", (item_id,))
+    active_rentals = cur.fetchone()[0]
+    
+    return total_owned - active_rentals
 
 
 def place_in_line(item_id: str = None, customer_id: str = None) -> int:
@@ -151,12 +192,13 @@ def save_changes():
     """
     Commits all changes made to the db.
     """
-    raise NotImplementedError("you must implement this function")
+    conn.commit()
 
 
 def close_connection():
     """
     Closes the cursor and connection.
     """
-    raise NotImplementedError("you must implement this function")
+    cur.close()
+    conn.close()
 
