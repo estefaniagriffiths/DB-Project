@@ -48,7 +48,33 @@ def add_customer(new_customer: Customer = None):
     new_customer - A Customer object containing a new customer to be inserted into the DB in the customer table.
         new_customer and its attributes will never be None.
     """
-    raise NotImplementedError("you must implement this function")
+    street_part, city_part, state_zip_part = new_customer.address.split(", ")
+    street_tokens = street_part.split(" ", 1)
+    street_number = street_tokens[0]
+    street_name = street_tokens[1] if len(street_tokens) > 1 else ""
+    city = city_part
+    state_zip_tokens = state_zip_part.split(" ", 1)
+    state = state_zip_tokens[0]
+    zip_code = state_zip_tokens[1] if len(state_zip_tokens) > 1 else ""
+ 
+    cur.execute("SELECT COALESCE(MAX(ca_address_sk), 0) + 1 FROM customer_address")
+    new_addr_sk = cur.fetchone()[0]
+    cur.execute(
+        "INSERT INTO customer_address (ca_address_sk, ca_street_number, ca_street_name, ca_city, ca_state, ca_zip) "
+        "VALUES (?, ?, ?, ?, ?, ?)", (new_addr_sk, street_number, street_name, city, state, zip_code)
+        )
+ 
+    name_tokens = new_customer.name.split(" ", 1)
+    first_name = name_tokens[0]
+    last_name = name_tokens[1] if len(name_tokens) > 1 else ""
+ 
+    cur.execute("SELECT COALESCE(MAX(c_customer_sk), 0) + 1 FROM customer")
+    new_cust_sk = cur.fetchone()[0]
+ 
+    cur.execute(
+        "INSERT INTO customer (c_customer_sk, c_customer_id, c_first_name, c_last_name, c_email_address, c_current_addr_sk) "
+        "VALUES (?, ?, ?, ?, ?, ?)", (new_cust_sk, new_customer.customer_id, first_name, last_name, new_customer.email, new_addr_sk)
+    )
 
 
 def edit_customer(original_customer_id: str = None, new_customer: Customer = None):
@@ -56,7 +82,55 @@ def edit_customer(original_customer_id: str = None, new_customer: Customer = Non
     original_customer_id - A string containing the customer id for the customer to be edited.
     new_customer - A Customer object containing attributes to update. If an attribute is None, it should not be altered.
     """
-    raise NotImplementedError("you must implement this function")
+    cur.execute(
+        "SELECT c_customer_sk, c_current_addr_sk FROM customer WHERE c_customer_id = ?",
+        (original_customer_id,)
+    )
+    row = cur.fetchone()
+    if row is None:
+        return
+    cust_sk, addr_sk = row
+ 
+    if new_customer.address is not None and addr_sk is not None:
+        street_part, city_part, state_zip_part = new_customer.address.split(", ")
+        street_tokens = street_part.split(" ", 1)
+        street_number = street_tokens[0]
+        street_name = street_tokens[1] if len(street_tokens) > 1 else ""
+        city = city_part
+        state_zip_tokens = state_zip_part.split(" ", 1)
+        state = state_zip_tokens[0]
+        zip_code = state_zip_tokens[1] if len(state_zip_tokens) > 1 else ""
+ 
+        cur.execute(
+            "UPDATE customer_address SET ca_street_number = ?, ca_street_name = ?, "
+            "ca_city = ?, ca_state = ?, ca_zip = ? WHERE ca_address_sk = ?",
+            (street_number, street_name, city, state, zip_code, addr_sk)
+        )
+ 
+    set_clauses = []
+    params = []
+ 
+    if new_customer.customer_id is not None:
+        set_clauses.append("c_customer_id = ?")
+        params.append(new_customer.customer_id)
+ 
+    if new_customer.name is not None:
+        name_tokens = new_customer.name.split(" ", 1)
+        first_name = name_tokens[0]
+        last_name = name_tokens[1] if len(name_tokens) > 1 else ""
+        set_clauses.append("c_first_name = ?")
+        params.append(first_name)
+        set_clauses.append("c_last_name = ?")
+        params.append(last_name)
+ 
+    if new_customer.email is not None:
+        set_clauses.append("c_email_address = ?")
+        params.append(new_customer.email)
+ 
+    if set_clauses:
+        params.append(cust_sk)
+        query = f"UPDATE customer SET {', '.join(set_clauses)} WHERE c_customer_sk = ?"
+        cur.execute(query, params)
 
 
 def rent_item(item_id: str = None, customer_id: str = None):
@@ -78,13 +152,26 @@ def waitlist_customer(item_id: str = None, customer_id: str = None) -> int:
     """
     Returns the customer's new place in line.
     """
-    raise NotImplementedError("you must implement this function")
+    new_place = line_length(item_id) + 1
+    cur.execute(
+        "INSERT INTO waitlist (item_id, customer_id, place_in_line) VALUES (?, ?, ?)",
+        (item_id, customer_id, new_place)
+    )
+    return new_place
 
 def update_waitlist(item_id: str = None):
     """
     Removes person at position 1 and shifts everyone else down by 1.
     """
-    raise NotImplementedError("you must implement this function")
+    cur.execute(
+        "DELETE FROM waitlist WHERE item_id = ? AND place_in_line = 1",
+        (item_id,)
+    )
+ 
+    cur.execute(
+        "UPDATE waitlist SET place_in_line = place_in_line - 1 WHERE item_id = ?",
+        (item_id,)
+    )
 
 
 def return_item(item_id: str = None, customer_id: str = None):
@@ -98,7 +185,11 @@ def grant_extension(item_id: str = None, customer_id: str = None):
     """
     Adds 14 days to the due_date.
     """
-    raise NotImplementedError("you must implement this function")
+    cur.execute(
+        "UPDATE rental SET due_date = DATE_ADD(due_date, INTERVAL 14 DAY)"
+        "WHERE item_id = ? AND customer_id = ?",
+        (item_id, customer_id)
+    )
 
 
 def get_filtered_items(filter_attributes: Item = None,
@@ -178,14 +269,23 @@ def place_in_line(item_id: str = None, customer_id: str = None) -> int:
     """
     Returns the customer's place_in_line, or -1 if not on waitlist.
     """
-    raise NotImplementedError("you must implement this function")
+    cur.execute(
+        "SELECT place_in_line FROM waitlist WHERE item_id = ? AND customer_id = ?",
+        (item_id, customer_id)
+    )
+    row = cur.fetchone()
+    return int(row[0]) if row is not None else -1
 
 
 def line_length(item_id: str = None) -> int:
     """
     Returns how many people are on the waitlist for this item.
     """
-    raise NotImplementedError("you must implement this function")
+    cur.execute(
+        "SELECT COUNT(*) FROM waitlist WHERE item_id = ?",
+        (item_id,)
+    )
+    return cur.fetchone()[0]
 
 
 def save_changes():
